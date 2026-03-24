@@ -16,11 +16,16 @@
 ## 本地运行
 
 ```bash
+# 无参数启动交互模式（适合双击 exe 后使用）
+go run .
+
 go run . add "买牛奶"
 go run . list
 go run . done 1
 go run . list
 ```
+
+交互模式中输入 `help` 查看命令，输入 `exit` 或 `quit` 退出程序。
 
 ## 构建 Windows EXE
 
