@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/todo-windows-amd64.exe .
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o dist/todo-linux-amd64 .
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o dist/todo-linux-arm64 .
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o dist/todo-darwin-amd64 .
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o dist/todo-darwin-arm64 .
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/todo-windows-amd64.exe
+            dist/todo-linux-amd64
+            dist/todo-linux-arm64
+            dist/todo-darwin-amd64
+            dist/todo-darwin-arm64
+            dist/checksums.txt
