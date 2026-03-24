@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,15 +33,52 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		printUsage()
-		return nil
-	}
-
 	dataFile := dataFilePath()
 	store, err := loadStore(dataFile)
 	if err != nil {
 		return err
+	}
+
+	if len(args) == 0 {
+		return runInteractive(dataFile, &store)
+	}
+
+	return runCommand(args, dataFile, &store)
+}
+
+func runInteractive(dataFile string, store *Store) error {
+	fmt.Println("TODO List CLI interactive mode.")
+	fmt.Println("Type help to view commands, type exit to quit.")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("todo> ")
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("read input: %w", err)
+			}
+			fmt.Println()
+			return nil
+		}
+
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if line == "exit" || line == "quit" {
+			return nil
+		}
+
+		if err := runCommand(strings.Fields(line), dataFile, store); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
+	}
+}
+
+func runCommand(args []string, dataFile string, store *Store) error {
+	if len(args) == 0 {
+		printUsage()
+		return nil
 	}
 
 	switch args[0] {
@@ -60,7 +98,7 @@ func run(args []string) error {
 		}
 		store.NextID++
 		store.Tasks = append(store.Tasks, task)
-		if err := saveStore(dataFile, store); err != nil {
+		if err := saveStore(dataFile, *store); err != nil {
 			return err
 		}
 		fmt.Printf("Added task #%d: %s\n", task.ID, task.Title)
@@ -84,7 +122,7 @@ func run(args []string) error {
 			return err
 		}
 		store.Tasks = updated
-		if err := saveStore(dataFile, store); err != nil {
+		if err := saveStore(dataFile, *store); err != nil {
 			return err
 		}
 		fmt.Printf("Marked task #%d as done.\n", id)
@@ -100,7 +138,7 @@ func run(args []string) error {
 			return err
 		}
 		store.Tasks = updated
-		if err := saveStore(dataFile, store); err != nil {
+		if err := saveStore(dataFile, *store); err != nil {
 			return err
 		}
 		fmt.Printf("Marked task #%d as not done.\n", id)
@@ -116,7 +154,7 @@ func run(args []string) error {
 			return fmt.Errorf("task #%d not found", id)
 		}
 		store.Tasks = updated
-		if err := saveStore(dataFile, store); err != nil {
+		if err := saveStore(dataFile, *store); err != nil {
 			return err
 		}
 		fmt.Printf("Deleted task #%d.\n", id)
@@ -130,7 +168,7 @@ func run(args []string) error {
 			}
 		}
 		store.Tasks = pending
-		if err := saveStore(dataFile, store); err != nil {
+		if err := saveStore(dataFile, *store); err != nil {
 			return err
 		}
 		fmt.Println("Removed all completed tasks.")
@@ -258,6 +296,7 @@ func printUsage() {
 	fmt.Println(`TODO List CLI
 
 Usage:
+  todo                        Start interactive mode
   todo add <task title>        Add a new task
   todo list                    List all tasks
   todo done <id>               Mark a task as done
