@@ -32,3 +32,23 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/todo.exe .
 ```
 
 生成文件：`dist/todo.exe`
+
+## GitHub Release 自动发布
+
+仓库已配置 GitHub Actions 工作流：`.github/workflows/release.yml`
+
+- 触发条件：推送 `v*` 格式标签（例如 `v1.0.0`）
+- 自动构建产物：
+  - `todo-windows-amd64.exe`
+  - `todo-linux-amd64`
+  - `todo-linux-arm64`
+  - `todo-darwin-amd64`
+  - `todo-darwin-arm64`
+- 自动创建 GitHub Release 并上传以上文件
+
+示例发布命令：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
