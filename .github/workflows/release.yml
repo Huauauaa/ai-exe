@@ -20,14 +20,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
       - name: Build binaries
         run: |
           mkdir -p dist
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/todo-windows-amd64.exe .
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o dist/todo-linux-amd64 .
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o dist/todo-linux-arm64 .
-          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o dist/todo-darwin-amd64 .
-          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o dist/todo-darwin-arm64 .
+          go build -o dist/todo-linux-amd64 .
 
       - name: Generate checksums
         run: |
@@ -40,9 +41,5 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/todo-windows-amd64.exe
             dist/todo-linux-amd64
-            dist/todo-linux-arm64
-            dist/todo-darwin-amd64
-            dist/todo-darwin-arm64
             dist/checksums.txt

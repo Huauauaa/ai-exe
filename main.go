@@ -1,15 +1,21 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
 )
 
 type Task struct {
@@ -26,69 +32,59 @@ type Store struct {
 }
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
-	}
-}
-
-func run(args []string) error {
 	dataFile := dataFilePath()
 	store, err := loadStore(dataFile)
 	if err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
 	}
-
-	if len(args) == 0 {
-		return runInteractive(dataFile, &store)
-	}
-
-	return runCommand(args, dataFile, &store)
+	runGUI(dataFile, &store)
 }
 
-func runInteractive(dataFile string, store *Store) error {
-	fmt.Println("TODO List CLI interactive mode.")
-	fmt.Println("Type help to view commands, type exit to quit.")
+func runGUI(dataFile string, store *Store) {
+	a := app.NewWithID("ai-exe.todo")
+	w := a.NewWindow("TODO List")
+	w.Resize(fyne.NewSize(860, 580))
 
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("todo> ")
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return fmt.Errorf("read input: %w", err)
+	statusLabel := widget.NewLabel("就绪")
+	statusLabel.Wrapping = fyne.TextWrapWord
+	summaryLabel := widget.NewLabel("")
+	summaryLabel.TextStyle = fyne.TextStyle{Italic: true}
+
+	input := widget.NewEntry()
+	input.SetPlaceHolder("输入任务标题，例如：买牛奶")
+	input.Wrapping = fyne.TextWrapWord
+
+	var list *widget.List
+
+	updateSummary := func() {
+		total := len(store.Tasks)
+		done := 0
+		for _, task := range store.Tasks {
+			if task.Done {
+				done++
 			}
-			fmt.Println()
-			return nil
 		}
-
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if line == "exit" || line == "quit" {
-			return nil
-		}
-
-		if err := runCommand(strings.Fields(line), dataFile, store); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-		}
-	}
-}
-
-func runCommand(args []string, dataFile string, store *Store) error {
-	if len(args) == 0 {
-		printUsage()
-		return nil
+		summaryLabel.SetText(fmt.Sprintf("总任务: %d   已完成: %d   未完成: %d", total, done, total-done))
 	}
 
-	switch args[0] {
-	case "add":
-		if len(args) < 2 {
-			return errors.New("add command requires a task title")
+	saveAndRefresh := func(successMessage string) bool {
+		if err := saveStore(dataFile, *store); err != nil {
+			dialog.ShowError(err, w)
+			return false
 		}
-		title := strings.TrimSpace(strings.Join(args[1:], " "))
+		sortTasks(store.Tasks)
+		list.Refresh()
+		updateSummary()
+		statusLabel.SetText(successMessage)
+		return true
+	}
+
+	addTask := func() {
+		title := strings.TrimSpace(input.Text)
 		if title == "" {
-			return errors.New("task title cannot be empty")
+			statusLabel.SetText("任务标题不能为空。")
+			return
 		}
 		task := Task{
 			ID:        store.NextID,
@@ -98,90 +94,132 @@ func runCommand(args []string, dataFile string, store *Store) error {
 		}
 		store.NextID++
 		store.Tasks = append(store.Tasks, task)
-		if err := saveStore(dataFile, *store); err != nil {
-			return err
+		if saveAndRefresh(fmt.Sprintf("已添加任务 #%d。", task.ID)) {
+			input.SetText("")
+			w.Canvas().Focus(input)
 		}
-		fmt.Printf("Added task #%d: %s\n", task.ID, task.Title)
-		return nil
+	}
 
-	case "list":
-		if len(store.Tasks) == 0 {
-			fmt.Println("No tasks found.")
-			return nil
-		}
-		printTasks(store.Tasks)
-		return nil
+	input.OnSubmitted = func(string) {
+		addTask()
+	}
 
-	case "done":
-		id, err := parseIDArg(args)
-		if err != nil {
-			return err
-		}
-		updated, err := markTask(store.Tasks, id, true)
-		if err != nil {
-			return err
-		}
-		store.Tasks = updated
-		if err := saveStore(dataFile, *store); err != nil {
-			return err
-		}
-		fmt.Printf("Marked task #%d as done.\n", id)
-		return nil
+	list = widget.NewList(
+		func() int {
+			return len(store.Tasks)
+		},
+		func() fyne.CanvasObject {
+			check := widget.NewCheck("", nil)
+			title := widget.NewLabel(" ")
+			title.Wrapping = fyne.TextWrapWord
+			deleteBtn := widget.NewButton("删除", nil)
+			rowTop := container.NewHBox(check, title, layout.NewSpacer(), deleteBtn)
 
-	case "undone":
-		id, err := parseIDArg(args)
-		if err != nil {
-			return err
-		}
-		updated, err := markTask(store.Tasks, id, false)
-		if err != nil {
-			return err
-		}
-		store.Tasks = updated
-		if err := saveStore(dataFile, *store); err != nil {
-			return err
-		}
-		fmt.Printf("Marked task #%d as not done.\n", id)
-		return nil
+			meta := widget.NewLabel(" ")
+			meta.Wrapping = fyne.TextWrapWord
+			meta.TextStyle = fyne.TextStyle{Italic: true}
+			return container.NewVBox(rowTop, meta, widget.NewSeparator())
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			if id < 0 || id >= len(store.Tasks) {
+				return
+			}
+			task := store.Tasks[id]
+			box := obj.(*fyne.Container)
 
-	case "delete":
-		id, err := parseIDArg(args)
-		if err != nil {
-			return err
-		}
-		updated, deleted := deleteTask(store.Tasks, id)
-		if !deleted {
-			return fmt.Errorf("task #%d not found", id)
-		}
-		store.Tasks = updated
-		if err := saveStore(dataFile, *store); err != nil {
-			return err
-		}
-		fmt.Printf("Deleted task #%d.\n", id)
-		return nil
+			rowTop := box.Objects[0].(*fyne.Container)
+			check := rowTop.Objects[0].(*widget.Check)
+			title := rowTop.Objects[1].(*widget.Label)
+			deleteBtn := rowTop.Objects[3].(*widget.Button)
+			meta := box.Objects[1].(*widget.Label)
 
-	case "clear-done":
-		var pending []Task
-		for _, task := range store.Tasks {
-			if !task.Done {
+			check.OnChanged = nil
+			check.SetChecked(task.Done)
+			check.OnChanged = func(done bool) {
+				updated, err := markTask(store.Tasks, task.ID, done)
+				if err != nil {
+					dialog.ShowError(err, w)
+					list.Refresh()
+					return
+				}
+				store.Tasks = updated
+				if !saveAndRefresh(fmt.Sprintf("已更新任务 #%d。", task.ID)) {
+					list.Refresh()
+				}
+			}
+
+			state := "TODO"
+			if task.Done {
+				state = "DONE"
+			}
+			title.SetText(fmt.Sprintf("#%d [%s] %s", task.ID, state, task.Title))
+
+			completedAt := "-"
+			if task.CompletedAt != nil {
+				completedAt = task.CompletedAt.Local().Format("2006-01-02 15:04")
+			}
+			meta.SetText(fmt.Sprintf("创建: %s    完成: %s", task.CreatedAt.Local().Format("2006-01-02 15:04"), completedAt))
+
+			deleteBtn.OnTapped = func() {
+				dialog.NewConfirm(
+					"删除任务",
+					fmt.Sprintf("确认删除任务 #%d 吗？", task.ID),
+					func(confirm bool) {
+						if !confirm {
+							return
+						}
+						updated, deleted := deleteTask(store.Tasks, task.ID)
+						if !deleted {
+							dialog.ShowError(fmt.Errorf("task #%d not found", task.ID), w)
+							return
+						}
+						store.Tasks = updated
+						saveAndRefresh(fmt.Sprintf("已删除任务 #%d。", task.ID))
+					},
+					w,
+				).Show()
+			}
+		},
+	)
+
+	addButton := widget.NewButton("新增任务", addTask)
+	clearDoneButton := widget.NewButton("清理已完成", func() {
+		dialog.NewConfirm("清理已完成", "确认删除全部已完成任务吗？", func(confirm bool) {
+			if !confirm {
+				return
+			}
+			pending := make([]Task, 0, len(store.Tasks))
+			removed := 0
+			for _, task := range store.Tasks {
+				if task.Done {
+					removed++
+					continue
+				}
 				pending = append(pending, task)
 			}
-		}
-		store.Tasks = pending
-		if err := saveStore(dataFile, *store); err != nil {
-			return err
-		}
-		fmt.Println("Removed all completed tasks.")
-		return nil
+			if removed == 0 {
+				statusLabel.SetText("没有已完成任务可清理。")
+				return
+			}
+			store.Tasks = pending
+			saveAndRefresh(fmt.Sprintf("已清理 %d 个已完成任务。", removed))
+		}, w).Show()
+	})
 
-	case "help", "-h", "--help":
-		printUsage()
-		return nil
+	header := container.NewVBox(
+		widget.NewLabelWithStyle("TODO List (Fyne)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		summaryLabel,
+		container.NewBorder(nil, nil, nil, addButton, input),
+		container.NewHBox(clearDoneButton, layout.NewSpacer(), statusLabel),
+		widget.NewSeparator(),
+	)
 
-	default:
-		printUsage()
-		return fmt.Errorf("unknown command: %s", args[0])
-	}
+	mainContent := container.NewBorder(header, nil, nil, nil, list)
+	w.SetContent(mainContent)
+
+	sortTasks(store.Tasks)
+	updateSummary()
+	w.ShowAndRun()
 }
 
 func dataFilePath() string {
@@ -234,17 +272,6 @@ func saveStore(path string, store Store) error {
 	return nil
 }
 
-func parseIDArg(args []string) (int, error) {
-	if len(args) < 2 {
-		return 0, errors.New("command requires task ID")
-	}
-	id, err := strconv.Atoi(args[1])
-	if err != nil || id <= 0 {
-		return 0, errors.New("task ID must be a positive integer")
-	}
-	return id, nil
-}
-
 func markTask(tasks []Task, id int, done bool) ([]Task, error) {
 	for i := range tasks {
 		if tasks[i].ID != id {
@@ -281,31 +308,8 @@ func nextID(tasks []Task) int {
 	return maxID + 1
 }
 
-func printTasks(tasks []Task) {
-	fmt.Printf("%-5s %-8s %-50s\n", "ID", "STATUS", "TITLE")
-	for _, task := range tasks {
-		status := "TODO"
-		if task.Done {
-			status = "DONE"
-		}
-		fmt.Printf("%-5d %-8s %-50s\n", task.ID, status, task.Title)
-	}
-}
-
-func printUsage() {
-	fmt.Println(`TODO List CLI
-
-Usage:
-  todo                        Start interactive mode
-  todo add <task title>        Add a new task
-  todo list                    List all tasks
-  todo done <id>               Mark a task as done
-  todo undone <id>             Mark a task as not done
-  todo delete <id>             Delete a task
-  todo clear-done              Delete all completed tasks
-  todo help                    Show this help
-
-Data file:
-  Default: ./todo.json
-  Custom: set TODO_FILE environment variable`)
+func sortTasks(tasks []Task) {
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].ID < tasks[j].ID
+	})
 }
